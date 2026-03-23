@@ -44,6 +44,7 @@ class Task(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), onupdate=func.now(), nullable=True)
     metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict, nullable=False)
+    model_version_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
 
     creator: Mapped["User"] = relationship(back_populates="tasks", foreign_keys=[created_by])  # noqa: F821
     assignments: Mapped[list["TaskAssignment"]] = relationship(back_populates="task")

@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
@@ -31,7 +31,9 @@ def _to_response(annotation: Annotation) -> AnnotationResponse:
 
 
 @router.post("", response_model=AnnotationResponse, status_code=201)
-async def submit_annotation(payload: AnnotationCreate, db: DbDep, annotator: AnnotatorDep):
+async def submit_annotation(
+    payload: AnnotationCreate, background_tasks: BackgroundTasks, db: DbDep, annotator: AnnotatorDep,
+):
     """Submit response + reward signal atomically. Marks assignment as completed."""
     assignment_id = uuid.UUID(payload.assignment_id)
     assignment = await db.get(TaskAssignment, assignment_id)
@@ -86,6 +88,10 @@ async def submit_annotation(payload: AnnotationCreate, db: DbDep, annotator: Ann
         from app.core.redis import get_redis
         from app.services.queue import remove_task_from_queue
         await remove_task_from_queue(get_redis(), task.id)
+
+        # Closed-loop RLHF: trigger fine-tuning in background
+        from app.services.finetune import maybe_trigger_finetune
+        background_tasks.add_task(maybe_trigger_finetune, task.id)
 
     await db.commit()
     await db.refresh(annotation)

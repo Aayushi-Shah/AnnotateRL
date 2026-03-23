@@ -4,6 +4,7 @@ from app.models.user import User, RefreshToken
 from app.models.task import Task, TaskAssignment
 from app.models.annotation import Annotation, RewardSignal
 from app.models.dataset import Dataset, DatasetExport
+from app.models.finetune import FineTuningJob, ModelVersion
 
 __all__ = [
     "Base",
@@ -15,4 +16,6 @@ __all__ = [
     "RewardSignal",
     "Dataset",
     "DatasetExport",
+    "FineTuningJob",
+    "ModelVersion",
 ]

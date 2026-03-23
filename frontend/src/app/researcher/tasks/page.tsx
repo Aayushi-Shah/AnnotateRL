@@ -1,9 +1,11 @@
 "use client";
 
+
 import { useState } from "react";
 import Link from "next/link";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { tasksApi } from "@/lib/api";
+import { tasksApi, apiFetch } from "@/lib/api";
+import type { PaginatedResponse, Task } from "@/lib/types";
 import { TaskCard } from "@/components/tasks/TaskCard";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -17,14 +19,17 @@ export default function TasksPage() {
   const [taskType, setTaskType] = useState("all");
   const qc = useQueryClient();
 
-  const { data, isLoading } = useQuery({
+  const { data, isPending, isError, refetch } = useQuery({
     queryKey: ["tasks", status, taskType],
-    queryFn: () =>
-      tasksApi.list({
-        status: status === "all" ? undefined : status,
-        task_type: taskType === "all" ? undefined : taskType,
-        size: 50,
-      }),
+    queryFn: () => {
+      const q = new URLSearchParams();
+      const s = status === "all" ? undefined : status;
+      const t = taskType === "all" ? undefined : taskType;
+      if (s) q.set("status", s);
+      if (t) q.set("task_type", t);
+      q.set("size", "50");
+      return apiFetch<PaginatedResponse<Task>>(`/tasks?${q}`);
+    },
   });
 
   const { mutate: publish, variables: publishingId } = useMutation({
@@ -78,9 +83,14 @@ export default function TasksPage() {
         </div>
       </div>
 
-      {isLoading ? (
+      {isPending ? (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {[...Array(6)].map((_, i) => <Skeleton key={i} className="h-48 w-full rounded-lg" />)}
+        </div>
+      ) : isError ? (
+        <div className="text-center py-12 space-y-3">
+          <p className="text-muted-foreground">Failed to load tasks.</p>
+          <Button variant="outline" size="sm" onClick={() => refetch()}>Retry</Button>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">

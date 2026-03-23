@@ -44,12 +44,11 @@ async def claim_next(
         if task is None:
             continue
 
-        # Skip if this annotator already has an active or completed assignment
+        # Skip if this annotator already has any assignment for this task
         existing = await db.scalar(
             select(func.count(TaskAssignment.id)).where(
                 TaskAssignment.task_id == task_id,
                 TaskAssignment.annotator_id == annotator_id,
-                TaskAssignment.status.in_([AssignmentStatus.in_progress, AssignmentStatus.completed]),
             )
         )
         if existing:
@@ -104,7 +103,6 @@ async def claim_specific(
         select(func.count(TaskAssignment.id)).where(
             TaskAssignment.task_id == task_id,
             TaskAssignment.annotator_id == annotator_id,
-            TaskAssignment.status.in_([AssignmentStatus.in_progress, AssignmentStatus.completed]),
         )
     )
     if existing:

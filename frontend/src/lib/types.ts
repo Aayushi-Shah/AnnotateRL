@@ -110,3 +110,30 @@ export interface AnnotatorStat {
   annotation_count: number;
   active_assignments: number;
 }
+
+// Fine-tuning
+export type FineTuneJobStatus = "pending" | "preparing_data" | "training" | "completed" | "failed";
+
+export interface FineTuningJob {
+  id: string;
+  status: FineTuneJobStatus;
+  trigger_task_id: string | null;
+  training_data_s3_key: string | null;
+  training_data_rows: number | null;
+  external_job_id: string | null;
+  config: Record<string, unknown>;
+  error_message: string | null;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+export interface ModelVersion {
+  id: string;
+  version_tag: string;
+  base_model: string;
+  finetuned_model_id: string | null;
+  is_active: boolean;
+  training_job_id: string | null;
+  created_at: string;
+}

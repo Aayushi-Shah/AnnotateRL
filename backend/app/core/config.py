@@ -36,13 +36,19 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
 
-    ANTHROPIC_API_KEY: str | None = None
+    ANTHROPIC_API_KEY: str | None = None  # deprecated, kept for backwards compat
+    OPENROUTER_API_KEY: str | None = None
 
     S3_BUCKET: str
     S3_ENDPOINT_URL: str | None = None
     AWS_ACCESS_KEY_ID: str
     AWS_SECRET_ACCESS_KEY: str
     S3_REGION: str = "us-east-1"
+
+    # Fine-tuning
+    FINETUNE_ENABLED: bool = True
+    FINETUNE_PROVIDER: str = "stub"  # "stub" for dev, swap to real provider later
+    FINETUNE_MIN_ROWS: int = 1  # low threshold for learning/demo
 
     CORS_ORIGINS: list[str] = ["http://localhost:3000"]
 

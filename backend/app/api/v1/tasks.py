@@ -45,9 +45,9 @@ async def list_tasks(
     size: int = Query(default=20, ge=1, le=100),
 ):
     query = select(Task)
-    if status:
+    if status and status != "all":
         query = query.where(Task.status == status)
-    if task_type:
+    if task_type and task_type != "all":
         query = query.where(Task.task_type == task_type)
 
     total = await db.scalar(select(func.count()).select_from(query.subquery()))
@@ -152,7 +152,7 @@ async def publish_task_endpoint(
 
     # Auto-generate AI responses in the background if key is configured
     from app.core.config import settings
-    if settings.ANTHROPIC_API_KEY:
+    if settings.OPENROUTER_API_KEY or settings.ANTHROPIC_API_KEY:
         background_tasks.add_task(generate_for_task, task.id)
 
     return _task_to_response(task)

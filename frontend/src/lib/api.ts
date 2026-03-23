@@ -8,11 +8,29 @@ class ApiError extends Error {
   }
 }
 
-async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
+const tryRefresh = async (refreshToken: string): Promise<boolean> => {
+  try {
+    const res = await fetch(`${API_URL}/api/v1/auth/refresh`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    });
+    if (!res.ok) return false;
+    const { access_token } = await res.json();
+    useAuthStore.getState().setAccessToken(access_token);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+export const apiFetch = async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
   const store = useAuthStore.getState();
   const token = store.accessToken;
 
-  const res = await fetch(`${API_URL}/api/v1${path}`, {
+  const url = `${API_URL}/api/v1${path}`;
+
+  const res = await fetch(url, {
     ...options,
     headers: {
       "Content-Type": "application/json",
@@ -39,23 +57,7 @@ async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
 
   if (res.status === 204) return undefined as T;
   return res.json();
-}
-
-async function tryRefresh(refreshToken: string): Promise<boolean> {
-  try {
-    const res = await fetch(`${API_URL}/api/v1/auth/refresh`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ refresh_token: refreshToken }),
-    });
-    if (!res.ok) return false;
-    const { access_token } = await res.json();
-    useAuthStore.getState().setAccessToken(access_token);
-    return true;
-  } catch {
-    return false;
-  }
-}
+};
 
 // ── Auth ─────────────────────────────────────────────────────────────────────
 
@@ -165,4 +167,21 @@ export const datasetsApi = {
     apiFetch<import("./types").DatasetExport>(`/datasets/${id}/export`, { method: "POST" }),
   exports: (id: string) =>
     apiFetch<import("./types").DatasetExport[]>(`/datasets/${id}/exports`),
+};
+
+// ── Fine-tuning ──────────────────────────────────────────────────────────────
+
+export const finetuneApi = {
+  listJobs: () => apiFetch<import("./types").FineTuningJob[]>("/finetune/jobs"),
+  getJob: (id: string) => apiFetch<import("./types").FineTuningJob>(`/finetune/jobs/${id}`),
+  triggerManual: (config?: Record<string, unknown>) =>
+    apiFetch<import("./types").FineTuningJob>("/finetune/jobs", {
+      method: "POST",
+      body: JSON.stringify(config ?? {}),
+    }),
+  listModels: () => apiFetch<import("./types").ModelVersion[]>("/finetune/models"),
+  activateModel: (id: string) =>
+    apiFetch<import("./types").ModelVersion>(`/finetune/models/${id}/activate`, {
+      method: "POST",
+    }),
 };

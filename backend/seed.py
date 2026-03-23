@@ -37,7 +37,7 @@ TASKS = [
         "task_type": "reasoning",
         "priority": 10,
         "annotations_required": 2,
-        "published": True,
+        "published": False,
     },
     {
         "title": "KV cache: purpose and tradeoffs",
@@ -45,7 +45,7 @@ TASKS = [
         "task_type": "reasoning",
         "priority": 8,
         "annotations_required": 1,
-        "published": True,
+        "published": False,
     },
     # ── Coding ─────────────────────────────────────────────────────────────────
     {
@@ -54,7 +54,7 @@ TASKS = [
         "task_type": "coding",
         "priority": 7,
         "annotations_required": 1,
-        "published": True,
+        "published": False,
     },
     {
         "title": "LRU cache implementation",
@@ -62,7 +62,7 @@ TASKS = [
         "task_type": "coding",
         "priority": 6,
         "annotations_required": 2,
-        "published": True,
+        "published": False,
     },
     # ── Comparison ─────────────────────────────────────────────────────────────
     {
@@ -71,7 +71,7 @@ TASKS = [
         "task_type": "comparison",
         "priority": 9,
         "annotations_required": 3,
-        "published": True,
+        "published": False,
     },
     # ── Correction ─────────────────────────────────────────────────────────────
     {
@@ -80,7 +80,7 @@ TASKS = [
         "task_type": "correction",
         "priority": 5,
         "annotations_required": 2,
-        "published": True,
+        "published": False,
     },
     # ── Draft ──────────────────────────────────────────────────────────────────
     {
@@ -140,15 +140,13 @@ async def seed() -> None:
                 metadata_={},
             )
             db.add(task)
-            await db.flush()  # get task.id before commit
+            await db.commit()  # commit first so generate_for_task can see the task
 
             if t["published"]:
                 await publish_task(redis, task.id, task.priority)
                 await generate_for_task(task.id)
 
             print(f"  added '{task.title}' [{task.task_type}, {status}]")
-
-        await db.commit()
 
     await redis.aclose()
     print("\nDone.")

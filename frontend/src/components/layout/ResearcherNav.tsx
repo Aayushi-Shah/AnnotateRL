@@ -2,26 +2,30 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { BarChart2, Database, LayoutDashboard, ListTodo, LogOut } from "lucide-react";
+import { Database, LayoutDashboard, ListTodo, LogOut, Zap } from "lucide-react";
 import { useAuthStore } from "@/lib/auth";
 import { authApi } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { useQueryClient } from "@tanstack/react-query";
 
 const navItems = [
   { href: "/researcher/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/researcher/tasks", label: "Tasks", icon: ListTodo },
   { href: "/researcher/datasets", label: "Datasets", icon: Database },
+  { href: "/researcher/finetune", label: "Fine-tuning", icon: Zap },
 ];
 
 export function ResearcherNav() {
   const pathname = usePathname();
   const router = useRouter();
   const { user, refreshToken, logout } = useAuthStore();
+  const qc = useQueryClient();
 
   async function handleLogout() {
     if (refreshToken) await authApi.logout(refreshToken).catch(() => {});
     logout();
+    qc.clear();
     router.replace("/login");
   }
 

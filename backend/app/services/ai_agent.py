@@ -1,12 +1,14 @@
 """
 AI response generation service.
 Called as a BackgroundTask when a task is published without pre-filled responses.
-Uses Claude to generate the model_response annotators will evaluate.
+Uses OpenRouter (OpenAI-compatible API) to generate the model_response annotators will evaluate.
 """
 import logging
 import uuid
 
-from anthropic import AsyncAnthropic
+from openai import AsyncOpenAI
+from sqlalchemy import select
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.config import settings
 from app.core.db import AsyncSessionLocal
@@ -47,10 +49,64 @@ _SYSTEM: dict[str, str] = {
     ),
 }
 
+DEFAULT_MODEL = "nvidia/nemotron-nano-9b-v2:free"
 
-def _text(message) -> str:
-    """Extract the first text block from a Claude response."""
-    return next((b.text for b in message.content if b.type == "text"), "")
+# Fallback models if the primary is rate-limited
+_FALLBACK_MODELS = [
+    "stepfun/step-3.5-flash:free",
+    "arcee-ai/trinity-mini:free",
+    "google/gemma-3-12b-it:free",
+]
+
+
+def _get_api_key() -> str | None:
+    """Return the configured API key, preferring OpenRouter over Anthropic."""
+    return settings.OPENROUTER_API_KEY or settings.ANTHROPIC_API_KEY
+
+
+async def _get_active_model(db) -> tuple[str, str | None]:
+    """Return (model_id, version_id) from the active ModelVersion, or fall back to default.
+    Stub-finetuned models (starting with 'stub-') fall back to the default model
+    since they aren't real, but we still return the version_id for tracking.
+    """
+    from app.models.finetune import ModelVersion
+
+    result = await db.execute(
+        select(ModelVersion).where(ModelVersion.is_active == True)  # noqa: E712
+    )
+    version = result.scalar_one_or_none()
+    if version:
+        model_id = version.finetuned_model_id
+        # Stub models aren't real — fall back to the base model for actual API calls
+        if not model_id or model_id.startswith("stub-"):
+            model_id = version.base_model or DEFAULT_MODEL
+        return model_id, str(version.id)
+    return DEFAULT_MODEL, None
+
+
+async def _chat(client: AsyncOpenAI, model: str, system: str, user_msg: str, max_tokens: int = 2048) -> str:
+    """Send a chat completion request with fallback models on rate-limit."""
+    models_to_try = [model] + [m for m in _FALLBACK_MODELS if m != model]
+    last_err = None
+    for m in models_to_try:
+        try:
+            resp = await client.chat.completions.create(
+                model=m,
+                max_tokens=max_tokens,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user_msg},
+                ],
+            )
+            if m != model:
+                logger.info("Used fallback model %s (primary %s was rate-limited)", m, model)
+            msg = resp.choices[0].message
+            # Some free models are "thinking" models that put output in reasoning
+            return msg.content or getattr(msg, "reasoning", None) or ""
+        except Exception as e:
+            logger.warning("Model %s failed: %s", m, e)
+            last_err = e
+    raise last_err  # all models failed
 
 
 async def generate_for_task(task_id: uuid.UUID) -> None:
@@ -58,7 +114,8 @@ async def generate_for_task(task_id: uuid.UUID) -> None:
     Generate AI response(s) for a published task and store them in task.metadata_.
     Runs as a FastAPI BackgroundTask — opens its own DB session.
     """
-    if not settings.ANTHROPIC_API_KEY:
+    api_key = _get_api_key()
+    if not api_key:
         return
 
     async with AsyncSessionLocal() as db:
@@ -72,50 +129,42 @@ async def generate_for_task(task_id: uuid.UUID) -> None:
         await db.commit()
 
         try:
-            client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+            client = AsyncOpenAI(
+                base_url="https://openrouter.ai/api/v1",
+                api_key=api_key,
+            )
+            model_id, version_id = await _get_active_model(db)
+
+            # Track which model version generated this task's response
+            if version_id:
+                metadata["model_version_id"] = version_id
+
             user_msg = task.prompt
             if task.context:
                 user_msg += f"\n\nContext: {task.context}"
 
             if task.task_type in ("reasoning", "coding"):
                 if not metadata.get("model_response"):
-                    resp = await client.messages.create(
-                        model="claude-opus-4-6",
-                        max_tokens=2048,
-                        system=_SYSTEM[task.task_type],
-                        messages=[{"role": "user", "content": user_msg}],
+                    metadata["model_response"] = await _chat(
+                        client, model_id, _SYSTEM[task.task_type], user_msg
                     )
-                    metadata["model_response"] = _text(resp)
 
             elif task.task_type == "comparison":
                 if not metadata.get("response_a"):
-                    resp_a = await client.messages.create(
-                        model="claude-opus-4-6",
-                        max_tokens=1024,
-                        system=_SYSTEM["comparison_a"],
-                        messages=[{"role": "user", "content": user_msg}],
+                    metadata["response_a"] = await _chat(
+                        client, model_id, _SYSTEM["comparison_a"], user_msg, max_tokens=1024
                     )
-                    metadata["response_a"] = _text(resp_a)
-
                 if not metadata.get("response_b"):
-                    resp_b = await client.messages.create(
-                        model="claude-opus-4-6",
-                        max_tokens=1024,
-                        system=_SYSTEM["comparison_b"],
-                        messages=[{"role": "user", "content": user_msg}],
+                    metadata["response_b"] = await _chat(
+                        client, model_id, _SYSTEM["comparison_b"], user_msg, max_tokens=1024
                     )
-                    metadata["response_b"] = _text(resp_b)
 
             elif task.task_type == "correction":
                 # Only generate if researcher didn't supply the context text
                 if not task.context:
-                    resp = await client.messages.create(
-                        model="claude-opus-4-6",
-                        max_tokens=1024,
-                        system=_SYSTEM["correction"],
-                        messages=[{"role": "user", "content": task.prompt}],
+                    task.context = await _chat(
+                        client, model_id, _SYSTEM["correction"], task.prompt, max_tokens=1024
                     )
-                    task.context = _text(resp)
 
             metadata["ai_generation_status"] = "done"
             logger.info("AI generation done for task %s", task_id)
@@ -124,5 +173,6 @@ async def generate_for_task(task_id: uuid.UUID) -> None:
             logger.exception("AI generation failed for task %s", task_id)
             metadata["ai_generation_status"] = "failed"
 
-        task.metadata_ = metadata
+        task.metadata_ = dict(metadata)
+        flag_modified(task, "metadata_")
         await db.commit()
