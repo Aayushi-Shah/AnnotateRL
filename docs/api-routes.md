@@ -1,6 +1,6 @@
 # API Routes
 
-> Auto-generated on 2026-03-23 16:20 UTC. Do not edit manually.
+> Auto-generated on 2026-03-23 22:47 UTC. Do not edit manually.
 
 ## annotations (`/annotations`)
 
