@@ -12,7 +12,6 @@ from app.models.base import Base
 class UserRole(str, PyEnum):
     researcher = "researcher"
     annotator = "annotator"
-    admin = "admin"
 
 
 class User(Base):

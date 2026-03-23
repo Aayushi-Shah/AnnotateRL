@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { metricsApi } from "@/lib/api";
 import { OverviewCards } from "@/components/dashboard/OverviewCards";
 import { ThroughputChart } from "@/components/dashboard/ThroughputChart";
+import { RewardDistributionChart } from "@/components/dashboard/RewardDistributionChart";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -19,6 +20,11 @@ export default function DashboardPage() {
     queryFn: () => metricsApi.throughput(30),
   });
 
+  const { data: rewardDist, isLoading: rewardLoading } = useQuery({
+    queryKey: ["metrics", "reward-distribution"],
+    queryFn: metricsApi.rewardDistribution,
+  });
+
   const { data: annotatorData, isLoading: annotatorsLoading } = useQuery({
     queryKey: ["metrics", "annotators"],
     queryFn: metricsApi.annotators,
@@ -32,6 +38,8 @@ export default function DashboardPage() {
       <OverviewCards data={overview} isLoading={overviewLoading} />
 
       <ThroughputChart data={throughput?.data} isLoading={throughputLoading} days={30} />
+
+      <RewardDistributionChart data={rewardDist} isLoading={rewardLoading} />
 
       <Card>
         <CardHeader>

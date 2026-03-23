@@ -89,7 +89,6 @@ async def me(current_user: CurrentUser):
     )
 
 
-# Admin-only: seed first user (disabled after first admin exists)
 @router.post("/register", response_model=UserResponse, include_in_schema=False)
 async def register(
     email: str,

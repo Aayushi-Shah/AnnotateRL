@@ -11,6 +11,14 @@ Cap at ~15 entries. Archive or remove entries that are no longer relevant.
 
 ---
 
+## 2026-03-23 docker: running build inside container while dev server is running also corrupts .next
+**Wrong:** Running `docker compose exec frontend npm run build` while the dev server is running inside that same container
+**Right:** The volume-mounted `.next` dir is shared — even running build *inside* the container overwrites it and breaks the dev server. For validation, only run `npm run lint` inside the container (not build), or stop the frontend container first before running build.
+**Why:** The dev server watches `.next/` for HMR. Build rewrites it atomically, invalidating the dev server's in-memory cache. Restart the container to recover.
+**Severity:** medium
+
+---
+
 ## 2026-03-23 logic: completed_count + 1 in annotation submission
 **Wrong:** Checking `if completed_count >= task.annotations_required` without accounting for the uncommitted current assignment
 **Right:** The code correctly does `(completed_count + 1) >= task.annotations_required` because the current assignment status change hasn't been committed yet. Always account for uncommitted state when checking thresholds in the same transaction.

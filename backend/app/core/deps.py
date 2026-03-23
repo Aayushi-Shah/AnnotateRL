@@ -44,13 +44,13 @@ CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
 async def require_researcher(current_user: CurrentUser) -> User:
-    if current_user.role not in (UserRole.researcher, UserRole.admin):
+    if current_user.role != UserRole.researcher:
         raise HTTPException(status_code=403, detail="Researcher access required")
     return current_user
 
 
 async def require_annotator(current_user: CurrentUser) -> User:
-    if current_user.role not in (UserRole.annotator, UserRole.admin):
+    if current_user.role != UserRole.annotator:
         raise HTTPException(status_code=403, detail="Annotator access required")
     return current_user
 

@@ -1,4 +1,4 @@
-export type UserRole = "researcher" | "annotator" | "admin";
+export type UserRole = "researcher" | "annotator";
 export type TaskType = "coding" | "reasoning" | "comparison" | "correction";
 export type TaskStatus = "draft" | "available" | "completed";
 export type AssignmentStatus = "in_progress" | "completed" | "expired" | "abandoned";
@@ -109,6 +109,10 @@ export interface AnnotatorStat {
   name: string;
   annotation_count: number;
   active_assignments: number;
+}
+
+export interface RewardDistribution {
+  distribution: Record<string, Record<string, number>>;
 }
 
 // Fine-tuning

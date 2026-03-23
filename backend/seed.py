@@ -23,8 +23,6 @@ USERS = [
     {"email": "carol@annotaterl.dev", "name": "Carol Kim",    "role": UserRole.annotator, "password": "annotator123"},
     {"email": "dave@annotaterl.dev",  "name": "Dave Nguyen",  "role": UserRole.annotator, "password": "annotator123"},
     {"email": "eve@annotaterl.dev",   "name": "Eve Martinez", "role": UserRole.annotator, "password": "annotator123"},
-    # Admin
-    {"email": "admin@annotaterl.dev", "name": "Admin",        "role": UserRole.admin,     "password": "admin123"},
 ]
 
 # Tasks — model_response / response_a / response_b already filled so annotators

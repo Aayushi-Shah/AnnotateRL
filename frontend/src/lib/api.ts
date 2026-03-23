@@ -151,6 +151,8 @@ export const metricsApi = {
     apiFetch<import("./types").ThroughputData>(`/metrics/throughput?days=${days}`),
   annotators: () =>
     apiFetch<{ annotators: import("./types").AnnotatorStat[] }>("/metrics/annotators"),
+  rewardDistribution: () =>
+    apiFetch<import("./types").RewardDistribution>("/metrics/reward-distribution"),
 };
 
 // ── Datasets ──────────────────────────────────────────────────────────────────
