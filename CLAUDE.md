@@ -136,18 +136,25 @@ Each annotation produces one `RewardSignal` with a JSONB `value`. Signal types a
 ### Dataset export
 Datasets are defined by a `filter_config` (task_type, date range, annotator IDs, min_rating). Triggering an export spawns a background task that queries annotations + reward signals, builds JSONL in HuggingFace datasets format, and uploads to `S3_BUCKET` via boto3 (pointed at MinIO locally).
 
-### Closed-loop fine-tuning (planned)
-The end goal is a fully automated RLHF loop — no manual steps between annotation and model improvement:
+### Closed-loop fine-tuning
+Fully automated RLHF loop — annotation → fine-tune → new model, no manual steps:
 
-1. Annotator submits a rating/signal → `RewardSignal` written to DB
-2. When a task reaches its required annotation count (`annotations_required` completions), a post-annotation hook should automatically trigger a fine-tuning job
-3. The fine-tuning job pulls the relevant JSONL (same format as dataset export) and calls a training API (e.g. Anthropic fine-tuning, OpenAI, or a self-hosted pipeline)
-4. The newly fine-tuned model replaces the one used in `ai_agent.generate_for_task` for subsequent tasks
+1. Annotator submits signal → `RewardSignal` written to DB
+2. When `annotations_required` completions are reached → task status → `completed`
+3. `annotations.py` fires `BackgroundTask: maybe_trigger_finetune` (gated by `FINETUNE_ENABLED` and no overlapping job)
+4. `app/services/finetune.py` builds training JSONL, uploads to S3, calls `TrainingProvider.start_training`
+5. New `ModelVersion` created (is_active=True); `ai_agent.generate_for_task` uses it for subsequent tasks
 
-**Where to build this:**
-- Trigger point: end of `queue.py::claim_next` / annotation submission in `api/v1/annotations.py` when a task transitions to `completed`
-- Fine-tune job logic: new `app/services/finetune.py`, called as a `BackgroundTask` (same pattern as `ai_agent.py` and `export.py`)
-- Model version tracking: extend `task.metadata_` or add a `ModelVersion` table to record which checkpoint generated each response, enabling per-version reward tracking
+**Key files:** `app/api/v1/annotations.py` (trigger), `app/services/finetune.py` (job runner), `app/models/finetune.py` (FineTuningJob + ModelVersion), `app/api/v1/finetune.py` (manual trigger + activation endpoints)
 
 ### Auth
 Short-lived JWT access tokens (15 min, HS256). Refresh tokens stored as SHA-256 hashes in `refresh_tokens` table. Frontend auto-retries on 401 using the stored refresh token before redirecting to `/login`.
+
+## Working with this codebase
+
+- Always plan before implementing — use plan mode for non-trivial changes
+- Zero tolerance for broken builds: lint and build must both exit 0
+- Prefer automation over manual steps; if something is done twice, automate it
+- Shared team knowledge lives in `.claude/rules/` (auto-loaded); auto-generated reference docs in `docs/` (updated by CI on push to main)
+- When a mistake is made or corrected, append an entry to `.claude/rules/corrections_log.md`
+- Typed Python (Pydantic schemas) and strict TypeScript throughout — do not introduce `any` or untyped patterns

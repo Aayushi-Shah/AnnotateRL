@@ -1,0 +1,36 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash scripts/check_rules_update.sh",
+            "timeout": 10,
+            "statusMessage": "Checking if rules need updating..."
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.file_path // .tool_response.filePath // empty' | { read -r f; case \"$f\" in */frontend/src/*) cd frontend && npx next lint --no-cache --max-warnings 0 2>&1 || true ;; esac; }",
+            "timeout": 30,
+            "statusMessage": "Running frontend lint..."
+          },
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.file_path // .tool_response.filePath // empty' | { read -r f; case \"$f\" in */backend/app/*.py) python -m py_compile \"$f\" 2>&1 || true ;; esac; }",
+            "timeout": 15,
+            "statusMessage": "Running backend syntax check..."
+          }
+        ]
+      }
+    ]
+  }
+}
