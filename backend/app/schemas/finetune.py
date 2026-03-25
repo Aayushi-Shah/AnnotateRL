@@ -12,6 +12,7 @@ class FineTuningJobResponse(BaseModel):
     trigger_task_id: str | None
     training_data_s3_key: str | None
     training_data_rows: int | None
+    training_stats: dict[str, Any] | None = None
     external_job_id: str | None
     config: dict[str, Any]
     error_message: str | None

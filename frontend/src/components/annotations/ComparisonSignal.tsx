@@ -43,7 +43,7 @@ export function ComparisonSignal({ responseA, responseB, chosen, rationale, onCh
                   </span>
                 )}
               </div>
-              <p className="text-sm whitespace-pre-wrap line-clamp-6">{text || <span className="italic text-muted-foreground">No response provided</span>}</p>
+              <p className="text-sm whitespace-pre-wrap overflow-y-auto max-h-64">{text || <span className="italic text-muted-foreground">No response provided</span>}</p>
             </button>
           );
         })}

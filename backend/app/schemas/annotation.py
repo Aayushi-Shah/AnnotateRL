@@ -5,7 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class AnnotationCreate(BaseModel):
     assignment_id: str
-    response: str = Field(min_length=1)
+    response: str = Field(default="")
     signal_type: str = Field(pattern="^(rating|comparison|correction|binary)$")
     signal_value: dict[str, Any]
     # signal_value shapes by type:

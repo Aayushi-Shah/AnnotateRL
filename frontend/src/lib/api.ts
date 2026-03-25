@@ -52,7 +52,10 @@ export const apiFetch = async <T,>(path: string, options: RequestInit = {}): Pro
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new ApiError(res.status, body.detail ?? body.message ?? "Request failed");
+    const detail = Array.isArray(body.detail)
+      ? body.detail.map((e: { msg: string }) => e.msg).join("; ")
+      : body.detail;
+    throw new ApiError(res.status, detail ?? body.message ?? "Request failed");
   }
 
   if (res.status === 204) return undefined as T;
@@ -153,6 +156,10 @@ export const metricsApi = {
     apiFetch<{ annotators: import("./types").AnnotatorStat[] }>("/metrics/annotators"),
   rewardDistribution: () =>
     apiFetch<import("./types").RewardDistribution>("/metrics/reward-distribution"),
+  taskIAA: (taskId: string) =>
+    apiFetch<import("./types").TaskIAA>(`/metrics/tasks/${taskId}/iaa`),
+  iaaSummary: () =>
+    apiFetch<import("./types").IAASummary>("/metrics/iaa-summary"),
 };
 
 // ── Datasets ──────────────────────────────────────────────────────────────────

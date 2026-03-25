@@ -23,6 +23,7 @@ def _job_response(job: FineTuningJob) -> FineTuningJobResponse:
         trigger_task_id=str(job.trigger_task_id) if job.trigger_task_id else None,
         training_data_s3_key=job.training_data_s3_key,
         training_data_rows=job.training_data_rows,
+        training_stats=job.training_stats,
         external_job_id=job.external_job_id,
         config=job.config,
         error_message=job.error_message,
@@ -90,8 +91,16 @@ async def list_model_versions(db: DbDep, researcher: ResearcherDep):
 
 
 @router.post("/models/{version_id}/activate", response_model=ModelVersionResponse)
-async def activate_model_version(version_id: uuid.UUID, db: DbDep, researcher: ResearcherDep):
-    """Switch the active model version used for AI generation."""
+async def activate_model_version(
+    version_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    db: DbDep,
+    researcher: ResearcherDep,
+):
+    """
+    Activate a candidate model version.
+    Triggers background re-generation of all previously rejected tasks using the new model.
+    """
     version = await db.get(ModelVersion, version_id)
     if not version:
         raise HTTPException(status_code=404, detail="Model version not found")
@@ -106,4 +115,9 @@ async def activate_model_version(version_id: uuid.UUID, db: DbDep, researcher: R
     version.is_active = True
     await db.commit()
     await db.refresh(version)
+
+    # Re-generate rejected tasks with the newly activated model
+    from app.services.ai_agent import regenerate_rejected_tasks
+    background_tasks.add_task(regenerate_rejected_tasks, version.id)
+
     return _version_response(version)

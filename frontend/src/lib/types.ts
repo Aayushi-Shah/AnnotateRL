@@ -115,6 +115,33 @@ export interface RewardDistribution {
   distribution: Record<string, Record<string, number>>;
 }
 
+export interface TaskIAA {
+  task_id: string;
+  annotation_count: number;
+  annotations_required: number;
+  signal_type: string | null;
+  agreement: {
+    mean?: number; std?: number; within_1_rate?: number;
+    percent_agreement?: number; kappa?: number; interpretation?: string;
+  } | null;
+}
+
+export interface IAASummary {
+  tasks_evaluated: number;
+  avg_kappa: number | null;
+  high_agreement_count: number;
+}
+
+export interface TrainingStats {
+  total_annotations: number;
+  accepted: number;
+  negative_examples: number;
+  dpo_pairs: number;
+  skipped_low_iaa: number;
+  skipped_ambiguous: number;
+  skipped_correction: number;
+}
+
 // Fine-tuning
 export type FineTuneJobStatus = "pending" | "preparing_data" | "training" | "completed" | "failed";
 
@@ -124,6 +151,7 @@ export interface FineTuningJob {
   trigger_task_id: string | null;
   training_data_s3_key: string | null;
   training_data_rows: number | null;
+  training_stats: TrainingStats | null;
   external_job_id: string | null;
   config: Record<string, unknown>;
   error_message: string | null;

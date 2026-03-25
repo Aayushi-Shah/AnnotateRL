@@ -2,7 +2,7 @@
 
 import { useParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { tasksApi, annotationsApi } from "@/lib/api";
+import { tasksApi, annotationsApi, metricsApi } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -25,6 +25,32 @@ function SignalSummary({ type, value }: { type: string; value: Record<string, un
   return <span>Correction</span>;
 }
 
+function qualityLabel(type: string, value: Record<string, unknown>): "accepted" | "negative" | "pending" {
+  if (type === "rating") {
+    const score = value.score as number;
+    if (score >= 4) return "accepted";
+    if (score < 3) return "negative";
+    return "pending";
+  }
+  if (type === "binary") return value.accept ? "accepted" : "negative";
+  if (type === "comparison") return "accepted"; // both sides chosen; task-level evaluation decides
+  return "pending";
+}
+
+const QUALITY_COLORS: Record<string, string> = {
+  accepted: "bg-green-100 text-green-700",
+  negative: "bg-red-100 text-red-700",
+  pending: "bg-gray-100 text-gray-500",
+};
+const QUALITY_LABELS: Record<string, string> = {
+  accepted: "Accepted",
+  negative: "Negative",
+  pending: "Pending",
+};
+
+const KAPPA_COLOR = (k: number) =>
+  k >= 0.6 ? "text-green-600" : k >= 0.4 ? "text-amber-600" : "text-red-600";
+
 export default function TaskDetailPage() {
   const { id } = useParams<{ id: string }>();
   const qc = useQueryClient();
@@ -37,6 +63,12 @@ export default function TaskDetailPage() {
   const { data: annotations, isLoading: annotationsLoading } = useQuery({
     queryKey: ["annotations", id],
     queryFn: () => annotationsApi.list({ task_id: id, size: 50 } as Parameters<typeof annotationsApi.list>[0]),
+  });
+
+  const { data: iaa } = useQuery({
+    queryKey: ["iaa", id],
+    queryFn: () => metricsApi.taskIAA(id),
+    enabled: !!task && task.annotations_required > 1,
   });
 
   const { mutate: publish, isPending: publishing } = useMutation({
@@ -99,6 +131,45 @@ export default function TaskDetailPage() {
         </Card>
       </div>
 
+      {task.annotations_required > 1 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Inter-Annotator Agreement</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {!iaa ? (
+              <p className="text-sm text-muted-foreground">Loading…</p>
+            ) : iaa.annotation_count < 2 ? (
+              <p className="text-sm text-muted-foreground">
+                Not enough annotations yet ({iaa.annotation_count} / {iaa.annotations_required} collected).
+              </p>
+            ) : iaa.signal_type === "correction" ? (
+              <p className="text-sm text-muted-foreground">IAA not applicable for correction tasks.</p>
+            ) : iaa.agreement && iaa.signal_type === "rating" ? (
+              <div className="flex items-center gap-6 text-sm">
+                <span>Mean: <strong>{iaa.agreement.mean}/5</strong> ± {iaa.agreement.std}</span>
+                <span>Within-1 agreement: <strong>{((iaa.agreement.within_1_rate ?? 0) * 100).toFixed(0)}%</strong></span>
+              </div>
+            ) : iaa.agreement?.kappa !== undefined ? (
+              <div className="flex items-center gap-4 text-sm">
+                <span>
+                  κ = <strong className={KAPPA_COLOR(iaa.agreement.kappa)}>{iaa.agreement.kappa.toFixed(2)}</strong>
+                </span>
+                <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                  iaa.agreement.kappa >= 0.6 ? "bg-green-100 text-green-700" :
+                  iaa.agreement.kappa >= 0.4 ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700"
+                }`}>
+                  {iaa.agreement.interpretation}
+                </span>
+                <span className="text-muted-foreground">
+                  Agreement: {((iaa.agreement.percent_agreement ?? 0) * 100).toFixed(0)}%
+                </span>
+              </div>
+            ) : null}
+          </CardContent>
+        </Card>
+      )}
+
       <Card>
         <CardHeader><CardTitle className="text-base">Prompt</CardTitle></CardHeader>
         <CardContent className="space-y-3">
@@ -123,15 +194,21 @@ export default function TaskDetailPage() {
             <p className="text-muted-foreground text-sm py-4">No annotations yet.</p>
           ) : (
             <div className="space-y-3">
-              {annotations?.items?.map((a) => (
-                <div key={a.id} className="border border-border rounded-lg p-3 flex items-center justify-between">
-                  <span className="text-xs text-muted-foreground">{formatDateTime(a.created_at)}</span>
-                  <span className="flex items-center gap-2">
-                    <Badge variant="outline">{SIGNAL_LABEL[a.signal_type]}</Badge>
-                    <SignalSummary type={a.signal_type} value={a.signal_value} />
-                  </span>
-                </div>
-              ))}
+              {annotations?.items?.map((a) => {
+                const ql = qualityLabel(a.signal_type, a.signal_value);
+                return (
+                  <div key={a.id} className="border border-border rounded-lg p-3 flex items-center justify-between">
+                    <span className="text-xs text-muted-foreground">{formatDateTime(a.created_at)}</span>
+                    <span className="flex items-center gap-2">
+                      <Badge variant="outline">{SIGNAL_LABEL[a.signal_type]}</Badge>
+                      <SignalSummary type={a.signal_type} value={a.signal_value} />
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${QUALITY_COLORS[ql]}`}>
+                        {QUALITY_LABELS[ql]}
+                      </span>
+                    </span>
+                  </div>
+                );
+              })}
             </div>
           )}
         </CardContent>

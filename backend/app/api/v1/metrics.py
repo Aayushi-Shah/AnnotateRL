@@ -1,7 +1,8 @@
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import cast, func, select
 from sqlalchemy.types import Date
 
@@ -75,25 +76,145 @@ async def reward_distribution(db: DbDep, researcher: ResearcherDep) -> dict[str,
         elif signal_type == "comparison":
             key = value.get("chosen", "?")
             distribution[signal_type][key] = distribution[signal_type].get(key, 0) + 1
+        elif signal_type == "correction":
+            distribution[signal_type]["count"] = distribution[signal_type].get("count", 0) + 1
 
     return {"distribution": distribution}
 
 
+def _compute_iaa(signal_type: str, values: list[dict]) -> dict:
+    """Compute inter-annotator agreement for a list of signal values (pure Python, no deps)."""
+    n = len(values)
+    if n < 2:
+        return {}
+    if signal_type == "rating":
+        scores = [float(v.get("score", 0)) for v in values]
+        mean = sum(scores) / n
+        std = (sum((s - mean) ** 2 for s in scores) / n) ** 0.5
+        pairs = [(scores[i], scores[j]) for i in range(n) for j in range(i + 1, n)]
+        within_1 = sum(1 for a, b in pairs if abs(a - b) <= 1) / len(pairs)
+        return {"mean": round(mean, 2), "std": round(std, 2), "within_1_rate": round(within_1, 3)}
+    if signal_type in ("binary", "comparison"):
+        labels = (
+            ["accept" if v.get("accept") else "reject" for v in values]
+            if signal_type == "binary"
+            else [v.get("chosen", "?") for v in values]
+        )
+        pairs = [(labels[i], labels[j]) for i in range(n) for j in range(i + 1, n)]
+        Po = sum(1 for a, b in pairs if a == b) / len(pairs)
+        Pe = sum((labels.count(c) / n) ** 2 for c in set(labels))
+        kappa = (Po - Pe) / (1 - Pe) if Pe < 1 else 1.0
+        interp = (
+            "poor" if kappa < 0.2 else
+            "fair" if kappa < 0.4 else
+            "moderate" if kappa < 0.6 else
+            "substantial" if kappa < 0.8 else
+            "almost perfect"
+        )
+        return {"percent_agreement": round(Po, 3), "kappa": round(kappa, 3), "interpretation": interp}
+    return {}
+
+
+@router.get("/tasks/{task_id}/iaa")
+async def task_iaa(task_id: uuid.UUID, db: DbDep, researcher: ResearcherDep) -> dict[str, Any]:
+    """Per-task inter-annotator agreement metrics (current round only)."""
+    task = await db.get(Task, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    # Only show signals from the current annotation round
+    offset = (task.metadata_ or {}).get("round_completed_offset", 0)
+    round_asgmt_result = await db.execute(
+        select(TaskAssignment.id)
+        .where(
+            TaskAssignment.task_id == task_id,
+            TaskAssignment.status == AssignmentStatus.completed,
+        )
+        .order_by(TaskAssignment.completed_at)
+        .offset(offset)
+    )
+    current_round_ids = [row[0] for row in round_asgmt_result.all()]
+
+    if current_round_ids:
+        result = await db.execute(
+            select(RewardSignal)
+            .join(Annotation, Annotation.id == RewardSignal.annotation_id)
+            .where(Annotation.assignment_id.in_(current_round_ids))
+        )
+        signals = result.scalars().all()
+    else:
+        signals = []
+
+    signal_type = signals[0].signal_type if signals else None
+    return {
+        "task_id": str(task_id),
+        "annotation_count": len(signals),
+        "annotations_required": task.annotations_required,
+        "signal_type": signal_type,
+        "agreement": _compute_iaa(signal_type, [s.value for s in signals]) if signal_type else None,
+    }
+
+
+@router.get("/iaa-summary")
+async def iaa_summary(db: DbDep, researcher: ResearcherDep) -> dict[str, Any]:
+    """Aggregate IAA stats across all completed tasks with multiple annotations."""
+    result = await db.execute(
+        select(Annotation.task_id, RewardSignal.signal_type, RewardSignal.value)
+        .join(RewardSignal, RewardSignal.annotation_id == Annotation.id)
+        .join(Task, Task.id == Annotation.task_id)
+        .where(Task.status == TaskStatus.completed)
+        .order_by(Annotation.task_id)
+    )
+    rows = result.all()
+
+    by_task: dict[str, list] = {}
+    for task_id, signal_type, value in rows:
+        by_task.setdefault(str(task_id), []).append((signal_type, value))
+
+    tasks_evaluated = 0
+    kappas = []
+    for entries in by_task.values():
+        if len(entries) < 2:
+            continue
+        tasks_evaluated += 1
+        stype = entries[0][0]
+        if stype in ("binary", "comparison"):
+            iaa = _compute_iaa(stype, [v for _, v in entries])
+            if "kappa" in iaa:
+                kappas.append(iaa["kappa"])
+
+    return {
+        "tasks_evaluated": tasks_evaluated,
+        "avg_kappa": round(sum(kappas) / len(kappas), 3) if kappas else None,
+        "high_agreement_count": sum(1 for k in kappas if k >= 0.6),
+    }
+
+
 @router.get("/annotators")
 async def annotator_stats(db: DbDep, researcher: ResearcherDep) -> dict[str, Any]:
+    # Use scalar subqueries to avoid JOIN multiplication when both tables have
+    # multiple rows per user (e.g. 2 annotations × 2 assignments = 4 counted).
+    annotation_count_sq = (
+        select(func.count(Annotation.id))
+        .where(Annotation.annotator_id == User.id)
+        .scalar_subquery()
+    )
+    active_assignments_sq = (
+        select(func.count(TaskAssignment.id))
+        .where(
+            TaskAssignment.annotator_id == User.id,
+            TaskAssignment.status == AssignmentStatus.in_progress,
+        )
+        .scalar_subquery()
+    )
     result = await db.execute(
         select(
             User.id,
             User.name,
-            func.count(Annotation.id).label("annotation_count"),
-            func.count(TaskAssignment.id).filter(
-                TaskAssignment.status == AssignmentStatus.in_progress
-            ).label("active_assignments"),
+            annotation_count_sq.label("annotation_count"),
+            active_assignments_sq.label("active_assignments"),
         )
-        .join(Annotation, Annotation.annotator_id == User.id, isouter=True)
-        .join(TaskAssignment, TaskAssignment.annotator_id == User.id, isouter=True)
         .where(User.role == UserRole.annotator)
-        .group_by(User.id, User.name)
     )
     return {
         "annotators": [

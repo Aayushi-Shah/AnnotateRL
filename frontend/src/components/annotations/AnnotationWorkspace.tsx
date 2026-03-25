@@ -173,7 +173,7 @@ export function AnnotationWorkspace({ task, assignment, onComplete, onAbandon }:
             ) : (
               <pre
                 className={cn(
-                  "text-sm whitespace-pre-wrap rounded-lg border border-border bg-muted/30 p-3 leading-relaxed",
+                  "text-sm whitespace-pre-wrap rounded-lg border border-border bg-muted/30 p-3 leading-relaxed max-h-64 overflow-y-auto",
                   task.task_type === "coding" && "font-mono"
                 )}
               >
@@ -184,7 +184,7 @@ export function AnnotationWorkspace({ task, assignment, onComplete, onAbandon }:
         )}
 
         {/* Signal */}
-        <div className="border border-border rounded-lg p-4">
+        <div className="border border-border rounded-lg p-4 max-h-[32rem] overflow-y-auto">
           <p className="text-xs uppercase tracking-wide text-muted-foreground mb-4">Evaluation</p>
 
           {signalType === "rating" && (

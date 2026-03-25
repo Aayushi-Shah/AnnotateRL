@@ -44,24 +44,26 @@ async def claim_next(
         if task is None:
             continue
 
-        # Skip if this annotator already has any assignment for this task
+        # Skip if this annotator already has an active (in_progress) assignment
         existing = await db.scalar(
             select(func.count(TaskAssignment.id)).where(
                 TaskAssignment.task_id == task_id,
                 TaskAssignment.annotator_id == annotator_id,
+                TaskAssignment.status == AssignmentStatus.in_progress,
             )
         )
         if existing:
             continue
 
-        # Check if task still needs more annotations
+        # Check if task still needs more annotations this round
         completed = await db.scalar(
             select(func.count(TaskAssignment.id)).where(
                 TaskAssignment.task_id == task_id,
                 TaskAssignment.status == AssignmentStatus.completed,
             )
         )
-        if completed >= task.annotations_required:
+        offset = (task.metadata_ or {}).get("round_completed_offset", 0)
+        if (completed - offset) >= task.annotations_required:
             # Fully annotated — clean up
             task.status = TaskStatus.completed
             await remove_task_from_queue(redis, task_id)
@@ -103,6 +105,7 @@ async def claim_specific(
         select(func.count(TaskAssignment.id)).where(
             TaskAssignment.task_id == task_id,
             TaskAssignment.annotator_id == annotator_id,
+            TaskAssignment.status == AssignmentStatus.in_progress,
         )
     )
     if existing:
@@ -114,7 +117,8 @@ async def claim_specific(
             TaskAssignment.status == AssignmentStatus.completed,
         )
     )
-    if completed >= task.annotations_required:
+    offset = (task.metadata_ or {}).get("round_completed_offset", 0)
+    if (completed - offset) >= task.annotations_required:
         task.status = TaskStatus.completed
         await remove_task_from_queue(redis, task_id)
         await db.commit()

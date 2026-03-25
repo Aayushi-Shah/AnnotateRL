@@ -19,10 +19,10 @@ Cap at ~15 entries. Archive or remove entries that are no longer relevant.
 
 ---
 
-## 2026-03-23 logic: completed_count + 1 in annotation submission
-**Wrong:** Checking `if completed_count >= task.annotations_required` without accounting for the uncommitted current assignment
-**Right:** The code correctly does `(completed_count + 1) >= task.annotations_required` because the current assignment status change hasn't been committed yet. Always account for uncommitted state when checking thresholds in the same transaction.
-**Why:** The count query returns pre-commit state. Missing this leads to tasks never completing.
+## 2026-03-23 logic: completed_count + 1 — count MUST run before changing assignment status
+**Wrong:** Setting `assignment.status = completed` THEN running the count query. SQLAlchemy autoflush fires before any SELECT, writing the status change, so count already includes current assignment. Adding `+1` double-counts → task completes after just 1 annotation even when 2+ are required.
+**Right:** Run count query BEFORE `assignment.status = completed`. Then `+1` correctly accounts for the assignment not yet in the count.
+**Why:** SQLAlchemy autoflush (always-on by default) flushes all dirty objects before a SELECT executes in the same session.
 **Severity:** high
 
 ## 2026-03-23 docker: frontend API URL is browser-relative

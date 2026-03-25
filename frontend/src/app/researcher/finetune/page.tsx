@@ -2,13 +2,13 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { finetuneApi } from "@/lib/api";
-import type { FineTuningJob, ModelVersion } from "@/lib/types";
+import type { FineTuningJob, ModelVersion, TrainingStats } from "@/lib/types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatDateTime } from "@/lib/utils";
-import { Play, Zap, CheckCircle2 } from "lucide-react";
+import { Play, Zap, CheckCircle2, Clock } from "lucide-react";
 
 function JobStatusBadge({ status }: { status: string }) {
   const colors: Record<string, string> = {
@@ -32,44 +32,77 @@ function JobStatusBadge({ status }: { status: string }) {
   );
 }
 
-function ActiveModelCard({ models }: { models: ModelVersion[] }) {
-  const active = models.find((m) => m.is_active);
+function joinParts(parts: string[]): string {
+  if (parts.length === 1) return parts[0];
+  if (parts.length === 2) return `${parts[0]} and ${parts[1]}`;
+  return `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
+}
 
-  if (!active) {
-    return (
-      <Card>
-        <CardContent className="p-4">
-          <p className="text-sm text-muted-foreground">
-            No active model version. AI generation uses the default base model.
-          </p>
-        </CardContent>
-      </Card>
-    );
-  }
+function TrainingDescription({ stats }: { stats: TrainingStats }) {
+  const parts: string[] = [];
+  if (stats.accepted > 0)
+    parts.push(`${stats.accepted} approved ${stats.accepted === 1 ? "response" : "responses"}`);
+  if (stats.negative_examples > 0)
+    parts.push(`${stats.negative_examples} rejected ${stats.negative_examples === 1 ? "response" : "responses"}`);
+  if (stats.dpo_pairs > 0)
+    parts.push(`${stats.dpo_pairs} preference ${stats.dpo_pairs === 1 ? "pair" : "pairs"}`);
+
+  const skipped = stats.skipped_low_iaa + stats.skipped_ambiguous + stats.skipped_correction;
+  const skippedTooltip = `Ambiguous quality: ${stats.skipped_ambiguous}, Low annotator agreement: ${stats.skipped_low_iaa}, Correction tasks: ${stats.skipped_correction}`;
 
   return (
-    <Card className="border-green-200 bg-green-50/50">
-      <CardContent className="p-4">
-        <div className="flex items-center gap-2 mb-2">
-          <Zap className="h-4 w-4 text-green-600" />
-          <span className="font-medium text-green-800">Active Model</span>
-        </div>
-        <div className="grid grid-cols-3 gap-4 text-sm">
-          <div>
-            <p className="text-muted-foreground">Version</p>
-            <p className="font-mono font-medium">{active.version_tag}</p>
+    <div className="text-xs mt-1.5 space-y-0.5">
+      <p className="text-foreground">
+        {parts.length > 0 ? `Trained on ${joinParts(parts)}.` : "No usable training examples found."}
+      </p>
+      {skipped > 0 && (
+        <p className="text-muted-foreground cursor-help" title={skippedTooltip}>
+          {skipped} {skipped === 1 ? "example" : "examples"} excluded — hover for details
+        </p>
+      )}
+    </div>
+  );
+}
+
+function ModelVersionSection({
+  version,
+  onActivate,
+}: {
+  version: ModelVersion | undefined;
+  onActivate: (id: string) => void;
+}) {
+  return (
+    <div className="mt-2 pt-2 border-t border-border/60 flex items-center justify-between min-h-[28px]">
+      {version ? (
+        <>
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-sm font-medium">{version.version_tag}</span>
+            {version.is_active ? (
+              <Badge variant="outline" className="border-green-300 text-green-700 text-xs">
+                <CheckCircle2 className="h-3 w-3 mr-1" /> Active
+              </Badge>
+            ) : (
+              <Badge variant="outline" className="border-amber-300 text-amber-700 text-xs">
+                <Clock className="h-3 w-3 mr-1" /> Candidate
+              </Badge>
+            )}
+            <span className="text-xs text-muted-foreground">{version.base_model}</span>
+            <span className="text-xs font-mono text-muted-foreground truncate max-w-[160px]">
+              {version.finetuned_model_id ?? "—"}
+            </span>
           </div>
-          <div>
-            <p className="text-muted-foreground">Base Model</p>
-            <p className="font-mono">{active.base_model}</p>
-          </div>
-          <div>
-            <p className="text-muted-foreground">Fine-tuned ID</p>
-            <p className="font-mono text-xs truncate">{active.finetuned_model_id ?? "—"}</p>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
+          {!version.is_active && (
+            <Button size="sm" variant="outline" onClick={() => onActivate(version.id)}>
+              Activate
+            </Button>
+          )}
+        </>
+      ) : (
+        <p className="text-xs text-muted-foreground italic">
+          Model version will appear here when training completes.
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -103,16 +136,32 @@ export default function FinetunePage() {
   const { mutate: activateModel } = useMutation({
     mutationFn: (id: string) => finetuneApi.activateModel(id),
     onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["finetune-jobs"] });
       qc.invalidateQueries({ queryKey: ["finetune-models"] });
     },
   });
 
   const isLoading = jobsLoading || modelsLoading;
+  const activeModel = models?.find((m: ModelVersion) => m.is_active);
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Fine-tuning</h1>
+        <div>
+          <h1 className="text-2xl font-bold">Fine-tuning</h1>
+          {!isLoading && (
+            activeModel ? (
+              <p className="text-sm text-muted-foreground mt-0.5">
+                <Zap className="h-3.5 w-3.5 inline mr-1 text-green-600" />
+                Active model: <span className="font-mono font-medium">{activeModel.version_tag}</span>
+              </p>
+            ) : (
+              <p className="text-sm text-muted-foreground mt-0.5">
+                No active model — using base model for AI generation.
+              </p>
+            )
+          )}
+        </div>
         <Button onClick={() => triggerJob()} disabled={triggering}>
           <Play className="h-4 w-4 mr-1" />
           {triggering ? "Triggering…" : "Trigger Fine-tune"}
@@ -121,94 +170,48 @@ export default function FinetunePage() {
 
       {isLoading ? (
         <div className="space-y-3">
-          {[...Array(3)].map((_, i) => <Skeleton key={i} className="h-20 w-full" />)}
+          {[...Array(3)].map((_, i) => <Skeleton key={i} className="h-24 w-full" />)}
         </div>
       ) : (
-        <>
-          {/* Active model */}
-          {models && <ActiveModelCard models={models} />}
-
-          {/* Jobs */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Fine-tuning Jobs</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {!jobs || jobs.length === 0 ? (
-                <p className="text-sm text-muted-foreground py-4 text-center">
-                  No fine-tuning jobs yet. Complete some annotations to trigger the RLHF loop, or trigger one manually.
-                </p>
-              ) : (
-                <div className="space-y-3">
-                  {jobs.map((job: FineTuningJob) => (
-                    <div key={job.id} className="flex items-center justify-between border border-border rounded-lg p-3">
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2">
-                          <JobStatusBadge status={job.status} />
-                          <span className="text-xs font-mono text-muted-foreground">{job.id.slice(0, 8)}</span>
-                        </div>
-                        <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                          <span>Rows: {job.training_data_rows ?? "—"}</span>
-                          <span>Provider: {String(job.config?.provider ?? "—")}</span>
-                          <span>{formatDateTime(job.created_at)}</span>
-                        </div>
-                        {job.error_message && (
-                          <p className="text-xs text-red-600 mt-1">{job.error_message}</p>
-                        )}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Fine-tuning Jobs</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {!jobs || jobs.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-4 text-center">
+                No fine-tuning jobs yet. Complete some annotations to trigger the RLHF loop, or trigger one manually.
+              </p>
+            ) : (
+              <div className="space-y-3">
+                {jobs.map((job: FineTuningJob) => {
+                  const modelVersion = models?.find((m: ModelVersion) => m.training_job_id === job.id);
+                  return (
+                    <div key={job.id} className="border border-border rounded-lg p-3">
+                      <div className="flex items-center justify-between mb-1">
+                        <JobStatusBadge status={job.status} />
+                        <span className="text-xs text-muted-foreground">{formatDateTime(job.created_at)}</span>
                       </div>
-                      {job.external_job_id && (
-                        <span className="text-xs font-mono text-muted-foreground truncate max-w-[180px]">
-                          {job.external_job_id}
-                        </span>
+                      {job.training_stats ? (
+                        <TrainingDescription stats={job.training_stats} />
+                      ) : (
+                        <p className="text-xs text-muted-foreground mt-1.5">
+                          {job.status === "preparing_data" ? "Preparing training data…" :
+                           job.status === "training" ? "Training in progress…" :
+                           job.status === "pending" ? "Waiting to start…" : ""}
+                        </p>
                       )}
+                      {job.error_message && (
+                        <p className="text-xs text-red-600 mt-1">{job.error_message}</p>
+                      )}
+                      <ModelVersionSection version={modelVersion} onActivate={activateModel} />
                     </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Model versions */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Model Versions</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {!models || models.length === 0 ? (
-                <p className="text-sm text-muted-foreground py-4 text-center">
-                  No model versions yet. They are created automatically when fine-tuning completes.
-                </p>
-              ) : (
-                <div className="space-y-2">
-                  {models.map((v: ModelVersion) => (
-                    <div key={v.id} className="flex items-center justify-between border border-border rounded-lg p-3">
-                      <div className="flex items-center gap-3">
-                        <span className="font-mono font-medium text-sm">{v.version_tag}</span>
-                        {v.is_active && (
-                          <Badge variant="outline" className="border-green-300 text-green-700 text-xs">
-                            <CheckCircle2 className="h-3 w-3 mr-1" /> Active
-                          </Badge>
-                        )}
-                        <span className="text-xs text-muted-foreground">{v.base_model}</span>
-                        <span className="text-xs font-mono text-muted-foreground truncate max-w-[160px]">
-                          {v.finetuned_model_id ?? "—"}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs text-muted-foreground">{formatDateTime(v.created_at)}</span>
-                        {!v.is_active && (
-                          <Button size="sm" variant="outline" onClick={() => activateModel(v.id)}>
-                            Activate
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </>
+                  );
+                })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
       )}
     </div>
   );

@@ -109,6 +109,67 @@ async def _chat(client: AsyncOpenAI, model: str, system: str, user_msg: str, max
     raise last_err  # all models failed
 
 
+async def regenerate_rejected_tasks(model_version_id: uuid.UUID) -> None:
+    """
+    Called after a model version is activated.
+    Finds all tasks with quality_status='rejected', saves the old response to
+    round_history, re-generates a new response using the now-active model,
+    and pushes each task back to the annotation queue.
+    """
+    from app.models.task import TaskStatus, TaskAssignment, AssignmentStatus
+    from app.services.queue import publish_task
+    from app.core.redis import get_redis
+    from sqlalchemy import func
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(Task).where(
+                Task.metadata_["quality_status"].astext == "rejected",
+                Task.status == TaskStatus.completed,
+            )
+        )
+        tasks = result.scalars().all()
+
+        task_ids = []
+        for task in tasks:
+            # Count completed assignments so far — new-round claims use this as an offset
+            completed_so_far = await db.scalar(
+                select(func.count(TaskAssignment.id)).where(
+                    TaskAssignment.task_id == task.id,
+                    TaskAssignment.status == AssignmentStatus.completed,
+                )
+            )
+
+            metadata = dict(task.metadata_ or {})
+            current_round = metadata.get("generation_round", 1)
+            metadata.setdefault("round_history", []).append({
+                "round": current_round,
+                "model_version_id": str(model_version_id),
+                "old_response": metadata.get("model_response", ""),
+            })
+            metadata["generation_round"] = current_round + 1
+            metadata["quality_status"] = "pending"
+            metadata["ai_generation_status"] = "pending"
+            # Offset so claim/completion checks only count NEW-round annotations
+            metadata["round_completed_offset"] = completed_so_far
+            # Clear old AI responses so generate_for_task produces fresh output
+            metadata.pop("model_response", None)
+            metadata.pop("response_a", None)
+            metadata.pop("response_b", None)
+            task.metadata_ = dict(metadata)
+            flag_modified(task, "metadata_")
+            task.status = TaskStatus.available
+            task_ids.append((task.id, task.priority))
+
+        await db.commit()
+        logger.info("Queued %d rejected tasks for re-generation using model %s", len(task_ids), model_version_id)
+
+    redis = get_redis()
+    for tid, priority in task_ids:
+        await publish_task(redis, tid, priority)
+        await generate_for_task(tid)
+
+
 async def generate_for_task(task_id: uuid.UUID) -> None:
     """
     Generate AI response(s) for a published task and store them in task.metadata_.

@@ -24,6 +24,7 @@ async def list_available(
         select(TaskAssignment.task_id)
         .where(
             TaskAssignment.annotator_id == annotator.id,
+            TaskAssignment.status == AssignmentStatus.in_progress,
         )
     )
     query = select(Task).where(

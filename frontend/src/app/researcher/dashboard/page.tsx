@@ -5,6 +5,7 @@ import { metricsApi } from "@/lib/api";
 import { OverviewCards } from "@/components/dashboard/OverviewCards";
 import { ThroughputChart } from "@/components/dashboard/ThroughputChart";
 import { RewardDistributionChart } from "@/components/dashboard/RewardDistributionChart";
+import { IAACard } from "@/components/dashboard/IAACard";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -18,6 +19,12 @@ export default function DashboardPage() {
   const { data: throughput, isLoading: throughputLoading } = useQuery({
     queryKey: ["metrics", "throughput", 30],
     queryFn: () => metricsApi.throughput(30),
+  });
+
+  const { data: iaaSummary, isLoading: iaaLoading } = useQuery({
+    queryKey: ["metrics", "iaa-summary"],
+    queryFn: metricsApi.iaaSummary,
+    refetchInterval: 60_000,
   });
 
   const { data: rewardDist, isLoading: rewardLoading } = useQuery({
@@ -40,6 +47,8 @@ export default function DashboardPage() {
       <ThroughputChart data={throughput?.data} isLoading={throughputLoading} days={30} />
 
       <RewardDistributionChart data={rewardDist} isLoading={rewardLoading} />
+
+      <IAACard data={iaaSummary} isLoading={iaaLoading} />
 
       <Card>
         <CardHeader>
