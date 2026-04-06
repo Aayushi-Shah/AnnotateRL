@@ -160,6 +160,10 @@ export const metricsApi = {
     apiFetch<import("./types").TaskIAA>(`/metrics/tasks/${taskId}/iaa`),
   iaaSummary: () =>
     apiFetch<import("./types").IAASummary>("/metrics/iaa-summary"),
+  annotatorsCalibration: () =>
+    apiFetch<{ calibration: Record<string, import("./types").AnnotatorCalibration> }>(
+      "/metrics/annotators-calibration"
+    ),
 };
 
 // ── Datasets ──────────────────────────────────────────────────────────────────
@@ -192,5 +196,14 @@ export const finetuneApi = {
   activateModel: (id: string) =>
     apiFetch<import("./types").ModelVersion>(`/finetune/models/${id}/activate`, {
       method: "POST",
+    }),
+  runEval: (id: string) =>
+    apiFetch<import("./types").EvalResult>(`/finetune/models/${id}/eval`, {
+      method: "POST",
+    }),
+  scoreResponse: (prompt: string, response: string) =>
+    apiFetch<{ score: number; confidence: number; source: string }>("/finetune/models/active/score", {
+      method: "POST",
+      body: JSON.stringify({ prompt, response }),
     }),
 };

@@ -25,5 +25,6 @@ class AnnotationResponse(BaseModel):
     response: str
     signal_type: str
     signal_value: dict[str, Any]
+    source: str  # "human" | "ai"
     created_at: datetime
     updated_at: datetime | None

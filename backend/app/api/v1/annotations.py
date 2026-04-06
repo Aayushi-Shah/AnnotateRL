@@ -51,11 +51,16 @@ def _evaluate_task_quality(signals: list) -> str:
             return "rejected"  # tie = no clear preference
         return "accepted"
 
-    return "pending"  # correction tasks: no scalar quality
+    if signal_type == "correction":
+        accepted_count = sum(1 for s in signals if s.value.get("critique_accepted"))
+        return "accepted" if accepted_count > len(signals) / 2 else "rejected"
+
+    return "pending"
 
 
 def _to_response(annotation: Annotation) -> AnnotationResponse:
     signal = annotation.reward_signal
+    source = (annotation.metadata_ or {}).get("source", "human")
     return AnnotationResponse(
         id=str(annotation.id),
         task_id=str(annotation.task_id),
@@ -64,6 +69,7 @@ def _to_response(annotation: Annotation) -> AnnotationResponse:
         response=annotation.response,
         signal_type=signal.signal_type if signal else "",
         signal_value=signal.value if signal else {},
+        source=source,
         created_at=annotation.created_at,
         updated_at=annotation.updated_at,
     )
@@ -110,6 +116,28 @@ async def submit_annotation(
         signal_type=payload.signal_type,
         value=payload.signal_value,
     )
+
+    # Correction rejection: record the annotation but don't count toward completion.
+    # Clear AI-generated content and re-trigger generation for the next annotator.
+    if payload.signal_type == "correction" and payload.signal_value.get("critique_accepted") is False:
+        assignment.status = AssignmentStatus.completed
+        assignment.completed_at = datetime.now(timezone.utc)
+        task = await db.get(Task, assignment.task_id)
+        task.context = None
+        metadata = dict(task.metadata_ or {})
+        metadata.pop("critique", None)
+        metadata.pop("revised_response", None)
+        metadata["ai_generation_status"] = "pending"
+        task.metadata_ = metadata
+        flag_modified(task, "metadata_")
+        db.add(signal)
+        await db.commit()
+        await db.refresh(annotation)
+        await db.refresh(signal)
+        annotation.reward_signal = signal
+        from app.services.ai_agent import generate_for_task
+        background_tasks.add_task(generate_for_task, task.id)
+        return _to_response(annotation)
 
     # Count BEFORE changing assignment status so autoflush doesn't include
     # the current assignment in the count. +1 accounts for this one.

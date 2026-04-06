@@ -33,6 +33,9 @@ class ModelVersion(Base):
     training_job: Mapped["FineTuningJob | None"] = relationship(
         back_populates="model_version", foreign_keys=[training_job_id]
     )
+    eval_results: Mapped[list["EvalResult"]] = relationship(  # noqa: F821
+        back_populates="model_version", foreign_keys="EvalResult.model_version_id"
+    )
 
 
 class FineTuningJob(Base):

@@ -40,13 +40,6 @@ _SYSTEM: dict[str, str] = {
         "Answer the following question with a comprehensive, detailed approach. "
         "Explore multiple angles and provide thorough coverage."
     ),
-    # Correction tasks: generate a flawed response for annotators to fix
-    "correction": (
-        "You are an AI assistant. Answer the question, but intentionally include "
-        "1–2 subtle errors or imprecisions (wrong facts, flawed logic, or a misleading statement) "
-        "that a knowledgeable human could identify and correct. "
-        "Do not announce the errors — weave them in naturally."
-    ),
 }
 
 DEFAULT_MODEL = "nvidia/nemotron-nano-9b-v2:free"
@@ -98,6 +91,8 @@ async def _chat(client: AsyncOpenAI, model: str, system: str, user_msg: str, max
                     {"role": "user", "content": user_msg},
                 ],
             )
+            if not resp.choices:
+                raise ValueError(f"Model {m} returned empty choices")
             if m != model:
                 logger.info("Used fallback model %s (primary %s was rate-limited)", m, model)
             msg = resp.choices[0].message
@@ -221,11 +216,59 @@ async def generate_for_task(task_id: uuid.UUID) -> None:
                     )
 
             elif task.task_type == "correction":
-                # Only generate if researcher didn't supply the context text
+                _NEUTRAL = (
+                    "You are a knowledgeable AI assistant. "
+                    "Answer the user's question accurately and concisely. "
+                    "Aim for 3–4 focused paragraphs — no need for elaborate headers or bullet lists."
+                )
+                _CRITIQUE_PROMPT = (
+                    "Review the following response. "
+                    "Does it contain any factual errors, logical flaws, or misleading statements? "
+                    "If yes, list each issue in 2–4 bullet points, being specific. "
+                    "If you find no errors, reply with exactly: 'No errors found.'"
+                )
                 if not task.context:
-                    task.context = await _chat(
-                        client, model_id, _SYSTEM["correction"], task.prompt, max_tokens=1024
+                    # Generate a natural response, then evaluate it for flaws.
+                    # Retry up to 3 times if the model reports no errors.
+                    candidate = ""
+                    critique = ""
+                    for _attempt in range(3):
+                        candidate = await _chat(
+                            client, model_id, _NEUTRAL, task.prompt, max_tokens=2048
+                        )
+                        critique = await _chat(
+                            client,
+                            model_id,
+                            _SYSTEM["reasoning"],
+                            f"Response:\n{candidate}\n\n{_CRITIQUE_PROMPT}",
+                            max_tokens=1024,
+                        )
+                        if "no errors found" not in critique.lower():
+                            break  # found a flawed response
+                    task.context = candidate
+                    metadata["critique"] = critique
+                    revised = await _chat(
+                        client,
+                        model_id,
+                        _SYSTEM["reasoning"],
+                        (
+                            f"Original response:\n{candidate}\n\n"
+                            f"Critique:\n{critique}\n\n"
+                            "Write a corrected version that addresses all issues identified."
+                        ),
+                        max_tokens=2048,
                     )
+                    metadata["revised_response"] = revised
+                elif not metadata.get("critique"):
+                    # Researcher-provided context: only generate the critique
+                    critique = await _chat(
+                        client,
+                        model_id,
+                        _SYSTEM["reasoning"],
+                        f"Response:\n{task.context}\n\n{_CRITIQUE_PROMPT}",
+                        max_tokens=1024,
+                    )
+                    metadata["critique"] = critique
 
             metadata["ai_generation_status"] = "done"
             logger.info("AI generation done for task %s", task_id)
@@ -237,3 +280,14 @@ async def generate_for_task(task_id: uuid.UUID) -> None:
         task.metadata_ = dict(metadata)
         flag_modified(task, "metadata_")
         await db.commit()
+
+    # Trigger AI annotation after generation succeeds (RLAIF / hybrid modes).
+    # Runs outside the session so ai_annotate_task opens its own session cleanly.
+    annotation_mode = metadata.get("annotation_mode")
+    if (
+        annotation_mode in ("rlaif", "hybrid")
+        and metadata.get("ai_generation_status") == "done"
+        and settings.RLAIF_ENABLED
+    ):
+        from app.services.ai_annotator import ai_annotate_task
+        await ai_annotate_task(task_id)

@@ -2,7 +2,7 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { finetuneApi } from "@/lib/api";
-import type { FineTuningJob, ModelVersion, TrainingStats } from "@/lib/types";
+import type { FineTuningJob, ModelVersion, TrainingStats, EvalResult } from "@/lib/types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -64,12 +64,38 @@ function TrainingDescription({ stats }: { stats: TrainingStats }) {
   );
 }
 
+function EvalBadge({ eval: ev }: { eval: EvalResult | null }) {
+  if (!ev) return null;
+  if (ev.status === "pending" || ev.status === "running") {
+    return (
+      <span className="text-xs text-muted-foreground animate-pulse">Evaluating…</span>
+    );
+  }
+  if (ev.status === "failed") {
+    return <span className="text-xs text-red-500" title={ev.error_message ?? ""}>Eval failed</span>;
+  }
+  if (ev.win_rate !== null) {
+    const pct = Math.round(ev.win_rate * 100);
+    return (
+      <span className={`text-xs font-medium ${pct >= 50 ? "text-green-600" : "text-amber-600"}`}
+        title="Win rate vs current active model">
+        {pct}% win rate
+      </span>
+    );
+  }
+  return null;
+}
+
 function ModelVersionSection({
   version,
   onActivate,
+  onRunEval,
+  runningEval,
 }: {
   version: ModelVersion | undefined;
   onActivate: (id: string) => void;
+  onRunEval: (id: string) => void;
+  runningEval: boolean;
 }) {
   return (
     <div className="mt-2 pt-2 border-t border-border/60 flex items-center justify-between min-h-[28px]">
@@ -90,11 +116,24 @@ function ModelVersionSection({
             <span className="text-xs font-mono text-muted-foreground truncate max-w-[160px]">
               {version.finetuned_model_id ?? "—"}
             </span>
+            <EvalBadge eval={version.latest_eval} />
           </div>
           {!version.is_active && (
-            <Button size="sm" variant="outline" onClick={() => onActivate(version.id)}>
-              Activate
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => onRunEval(version.id)}
+                disabled={runningEval || version.latest_eval?.status === "running" || version.latest_eval?.status === "pending"}
+              >
+                {version.latest_eval?.status === "running" || version.latest_eval?.status === "pending"
+                  ? "Evaluating…"
+                  : "Run Eval"}
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => onActivate(version.id)}>
+                Activate
+              </Button>
+            </div>
           )}
         </>
       ) : (
@@ -123,6 +162,12 @@ export default function FinetunePage() {
   const { data: models, isLoading: modelsLoading } = useQuery({
     queryKey: ["finetune-models"],
     queryFn: finetuneApi.listModels,
+    refetchInterval: (q) =>
+      q.state.data?.some((m: ModelVersion) =>
+        ["pending", "running"].includes(m.latest_eval?.status ?? "")
+      )
+        ? 3000
+        : false,
   });
 
   const { mutate: triggerJob, isPending: triggering } = useMutation({
@@ -139,6 +184,11 @@ export default function FinetunePage() {
       qc.invalidateQueries({ queryKey: ["finetune-jobs"] });
       qc.invalidateQueries({ queryKey: ["finetune-models"] });
     },
+  });
+
+  const { mutate: runEval, isPending: runningEval } = useMutation({
+    mutationFn: (id: string) => finetuneApi.runEval(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["finetune-models"] }),
   });
 
   const isLoading = jobsLoading || modelsLoading;
@@ -204,7 +254,12 @@ export default function FinetunePage() {
                       {job.error_message && (
                         <p className="text-xs text-red-600 mt-1">{job.error_message}</p>
                       )}
-                      <ModelVersionSection version={modelVersion} onActivate={activateModel} />
+                      <ModelVersionSection
+                        version={modelVersion}
+                        onActivate={activateModel}
+                        onRunEval={runEval}
+                        runningEval={runningEval}
+                      />
                     </div>
                   );
                 })}

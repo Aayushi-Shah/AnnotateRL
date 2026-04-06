@@ -50,6 +50,10 @@ class Settings(BaseSettings):
     FINETUNE_PROVIDER: str = "stub"  # "stub" for dev, swap to real provider later
     FINETUNE_MIN_ROWS: int = 1  # low threshold for learning/demo
 
+    # RLAIF — AI auto-annotator
+    RLAIF_ENABLED: bool = False  # set True to activate AI co-annotator
+    RLAIF_ANNOTATOR_EMAIL: str = "ai@rlaif.system"  # identifies the AI user row
+
     CORS_ORIGINS: list[str] = ["http://localhost:3000"]
 
     @field_validator("CORS_ORIGINS", mode="before")

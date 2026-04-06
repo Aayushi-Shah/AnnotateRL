@@ -42,7 +42,7 @@ export interface TaskAssignment {
 
 export interface RatingValue { score: number }
 export interface ComparisonValue { chosen: "A" | "B"; rationale?: string }
-export interface CorrectionValue { edited: string }
+export interface CorrectionValue { edited: string; critique_accepted?: boolean }
 export interface BinaryValue { accept: boolean; justification?: string }
 export type SignalValue = RatingValue | ComparisonValue | CorrectionValue | BinaryValue;
 
@@ -54,6 +54,7 @@ export interface Annotation {
   response: string;
   signal_type: SignalType;
   signal_value: Record<string, unknown>;
+  source: "human" | "ai";
   created_at: string;
   updated_at: string | null;
 }
@@ -111,6 +112,13 @@ export interface AnnotatorStat {
   active_assignments: number;
 }
 
+export interface AnnotatorCalibration {
+  agreement_rate: number | null;    // % agreeing with majority (or within-1 for rating)
+  score_bias: number | null;        // avg delta vs task mean for rating (+lenient, -harsh)
+  median_completion_minutes: number | null;
+  comparable_tasks: number;         // how many multi-annotator tasks contributed
+}
+
 export interface RewardDistribution {
   distribution: Record<string, Record<string, number>>;
 }
@@ -160,6 +168,17 @@ export interface FineTuningJob {
   completed_at: string | null;
 }
 
+export interface EvalResult {
+  id: string;
+  model_version_id: string;
+  eval_set_id: string;
+  status: "pending" | "running" | "completed" | "failed";
+  win_rate: number | null;
+  error_message: string | null;
+  created_at: string;
+  completed_at: string | null;
+}
+
 export interface ModelVersion {
   id: string;
   version_tag: string;
@@ -168,4 +187,5 @@ export interface ModelVersion {
   is_active: boolean;
   training_job_id: string | null;
   created_at: string;
+  latest_eval: EvalResult | null;
 }

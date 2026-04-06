@@ -24,6 +24,7 @@ export function TaskForm() {
     task_type: "reasoning" as string,
     priority: 0,
     annotations_required: 1,
+    annotation_mode: "rlhf" as "rlhf" | "rlaif" | "hybrid",
   });
   const [error, setError] = useState("");
 
@@ -47,7 +48,7 @@ export function TaskForm() {
       task_type: form.task_type,
       priority: form.priority,
       annotations_required: form.annotations_required,
-      metadata: {},
+      metadata: form.rlaif ? { rlaif: true } : {},
     });
   }
 
@@ -151,6 +152,31 @@ export function TaskForm() {
             />
             <p className="text-xs text-muted-foreground">Higher = served first in queue</p>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>AI Annotator (RLAIF)</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex items-center gap-3">
+            <input
+              type="checkbox"
+              id="rlaif"
+              checked={form.rlaif}
+              onChange={(e) => set("rlaif", e.target.checked)}
+              className="h-4 w-4 rounded border-border cursor-pointer accent-primary"
+            />
+            <label htmlFor="rlaif" className="text-sm cursor-pointer select-none font-medium">
+              Enable AI co-annotator
+            </label>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            When enabled, Claude automatically generates a rating or comparison choice for this
+            task alongside human annotators. Requires <code>RLAIF_ENABLED=true</code> in the
+            backend environment.
+          </p>
         </CardContent>
       </Card>
 

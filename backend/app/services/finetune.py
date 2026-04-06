@@ -66,6 +66,8 @@ def _extract_scalar_reward(signal: RewardSignal) -> float | None:
         return 1.0 if v.get("accept") else 0.0
     if signal.signal_type == "comparison":
         return 1.0 if v.get("chosen") == "A" else 0.0
+    if signal.signal_type == "correction":
+        return 1.0 if v.get("critique_accepted") else 0.0
     return None
 
 
@@ -120,7 +122,7 @@ async def _build_training_rows(db) -> tuple[list[dict], dict]:
         "dpo_pairs": 0,
         "skipped_low_iaa": 0,
         "skipped_ambiguous": 0,
-        "skipped_correction": 0,
+        "correction_dpo": 0,
     }
 
     for tid, entries in by_task.items():
@@ -152,8 +154,7 @@ async def _build_training_rows(db) -> tuple[list[dict], dict]:
 
         for annotation, signal, _ in entries:
             if signal.signal_type == "correction":
-                stats["skipped_correction"] += 1
-                continue
+                continue  # correction handled as a DPO pair at task level below
 
             reward = _extract_scalar_reward(signal)
             rows.append({
@@ -178,6 +179,21 @@ async def _build_training_rows(db) -> tuple[list[dict], dict]:
                 stats["accepted"] += 1
             else:
                 stats["negative_examples"] += 1
+
+        # Correction tasks: one DPO pair per accepted task (flawed vs AI-corrected)
+        if task.task_type == "correction" and quality_status == "accepted":
+            revised = (task.metadata_ or {}).get("revised_response", "")
+            flawed = task.context or ""
+            if revised and flawed:
+                rows.append({
+                    "format": "dpo",
+                    "prompt": task.prompt,
+                    "chosen": revised,
+                    "rejected": flawed,
+                    "task_id": tid,
+                })
+                stats["dpo_pairs"] += 1
+                stats["correction_dpo"] += 1
 
         # DPO pair: task was rejected in a prior round, then accepted in a later round
         if (

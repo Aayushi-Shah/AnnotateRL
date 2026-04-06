@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime, timedelta, timezone
+from statistics import median
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
@@ -227,3 +228,94 @@ async def annotator_stats(db: DbDep, researcher: ResearcherDep) -> dict[str, Any
             for row in result
         ]
     }
+
+
+@router.get("/annotators-calibration")
+async def annotators_calibration(db: DbDep, researcher: ResearcherDep) -> dict[str, Any]:
+    """
+    Batch calibration metrics for all annotators.
+    - agreement_rate: % of annotations agreeing with majority (binary/comparison) or within 1 of
+      task mean (rating). Only meaningful for tasks with >= 2 annotators.
+    - score_bias: avg delta vs task mean for rating tasks (+ = lenient, - = harsh).
+    - median_completion_minutes: median time from claim to completion.
+    - comparable_tasks: how many multi-annotator tasks contributed to agreement_rate.
+    """
+    # 1. Speed: all completed assignment timings
+    timing_result = await db.execute(
+        select(
+            TaskAssignment.annotator_id,
+            TaskAssignment.claimed_at,
+            TaskAssignment.completed_at,
+        ).where(
+            TaskAssignment.status == AssignmentStatus.completed,
+            TaskAssignment.completed_at.is_not(None),
+            TaskAssignment.claimed_at.is_not(None),
+        )
+    )
+    annotator_times: dict[str, list[float]] = {}
+    for annotator_id, claimed_at, completed_at in timing_result:
+        minutes = (completed_at - claimed_at).total_seconds() / 60
+        annotator_times.setdefault(str(annotator_id), []).append(minutes)
+
+    # 2. All completed annotations with signals (for agreement + bias)
+    ann_result = await db.execute(
+        select(
+            Annotation.annotator_id,
+            Annotation.task_id,
+            RewardSignal.signal_type,
+            RewardSignal.value,
+        )
+        .join(RewardSignal, RewardSignal.annotation_id == Annotation.id)
+        .join(TaskAssignment, TaskAssignment.id == Annotation.assignment_id)
+        .where(TaskAssignment.status == AssignmentStatus.completed)
+    )
+
+    # Group by task
+    by_task: dict[str, list] = {}
+    for annotator_id, task_id, signal_type, value in ann_result:
+        by_task.setdefault(str(task_id), []).append((str(annotator_id), signal_type, value))
+
+    annotator_agreement: dict[str, list[int]] = {}
+    annotator_rating_delta: dict[str, list[float]] = {}
+
+    for entries in by_task.values():
+        if len(entries) < 2:
+            continue
+        signal_type = entries[0][1]
+
+        if signal_type == "rating":
+            scores = [(ann_id, float(v.get("score", 0))) for ann_id, _, v in entries]
+            task_mean = sum(s for _, s in scores) / len(scores)
+            for ann_id, score in scores:
+                annotator_rating_delta.setdefault(ann_id, []).append(score - task_mean)
+                annotator_agreement.setdefault(ann_id, []).append(
+                    1 if abs(score - task_mean) <= 1 else 0
+                )
+        elif signal_type in ("binary", "comparison"):
+            labels = [
+                (ann_id, "accept" if v.get("accept") else "reject")
+                if signal_type == "binary"
+                else (ann_id, v.get("chosen", "?"))
+                for ann_id, _, v in entries
+            ]
+            label_counts: dict[str, int] = {}
+            for _, lbl in labels:
+                label_counts[lbl] = label_counts.get(lbl, 0) + 1
+            majority = max(label_counts, key=lambda k: label_counts[k])
+            for ann_id, lbl in labels:
+                annotator_agreement.setdefault(ann_id, []).append(1 if lbl == majority else 0)
+
+    all_ids = set(annotator_times) | set(annotator_agreement) | set(annotator_rating_delta)
+    calibration: dict[str, dict] = {}
+    for ann_id in all_ids:
+        agreements = annotator_agreement.get(ann_id, [])
+        deltas = annotator_rating_delta.get(ann_id, [])
+        times = annotator_times.get(ann_id, [])
+        calibration[ann_id] = {
+            "agreement_rate": round(sum(agreements) / len(agreements), 3) if agreements else None,
+            "score_bias": round(sum(deltas) / len(deltas), 2) if deltas else None,
+            "median_completion_minutes": round(median(times), 1) if times else None,
+            "comparable_tasks": len(agreements),
+        }
+
+    return {"calibration": calibration}

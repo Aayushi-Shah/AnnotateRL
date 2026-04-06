@@ -32,11 +32,7 @@ const DEFAULT_SIGNAL: Record<string, string> = {
 export function AnnotationWorkspace({ task, assignment, onComplete, onAbandon }: Props) {
   const qc = useQueryClient();
   const modelResponse = (task.metadata as Record<string, string>)?.model_response ?? "";
-  const [response, setResponse] = useState(
-    // Correction: pre-fill with AI response from context (annotator edits it)
-    // Rating tasks: pre-fill with model_response (submitted as-is; annotator only rates)
-    task.task_type === "correction" ? (task.context ?? "") : modelResponse
-  );
+  const [response, setResponse] = useState(modelResponse);
   const [tick, setTick] = useState(0);
   const [confirmAbandon, setConfirmAbandon] = useState(false);
   const [submitError, setSubmitError] = useState("");
@@ -53,8 +49,8 @@ export function AnnotationWorkspace({ task, assignment, onComplete, onAbandon }:
   const [accept, setAccept] = useState<boolean | null>(null);
   const [binaryJustification, setBinaryJustification] = useState("");
 
-  // Correction state — response IS the edited text
-  // (response is pre-filled above)
+  // Correction state — response IS the edited text; critiqueAccepted tracks checkbox
+  const [critiqueAccepted, setCritiqueAccepted] = useState<boolean | null>(null);
 
   // Countdown timer
   useEffect(() => {
@@ -73,7 +69,9 @@ export function AnnotationWorkspace({ task, assignment, onComplete, onAbandon }:
     if (signalType === "rating") return { score: ratingScore, justification: ratingJustification };
     if (signalType === "comparison") return { chosen, rationale };
     if (signalType === "binary") return { accept, justification: binaryJustification };
-    if (signalType === "correction") return { edited: response };
+    if (signalType === "correction") {
+      return { critique_accepted: critiqueAccepted };
+    }
     return {};
   }
 
@@ -82,7 +80,7 @@ export function AnnotationWorkspace({ task, assignment, onComplete, onAbandon }:
     if (signalType === "rating") return ratingValid(ratingScore, ratingJustification);
     if (signalType === "comparison") return comparisonValid(chosen);
     if (signalType === "binary") return binaryValid(accept);
-    if (signalType === "correction") return correctionValid(task.context ?? "", response);
+    if (signalType === "correction") return correctionValid(critiqueAccepted);
     return false;
   }
 
@@ -213,8 +211,10 @@ export function AnnotationWorkspace({ task, assignment, onComplete, onAbandon }:
           {signalType === "correction" && (
             <CorrectionSignal
               original={task.context ?? ""}
-              edited={response}
-              onChange={setResponse}
+              critique={metadata.critique}
+              critiqueAccepted={critiqueAccepted}
+              onCritiqueAcceptedChange={setCritiqueAccepted}
+              genPending={genPending}
             />
           )}
         </div>

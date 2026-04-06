@@ -1,7 +1,7 @@
 import uuid
 
 from fastapi import APIRouter, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import select, and_, or_, func
 
 from app.core.deps import AnnotatorDep, DbDep
 from app.core.redis import get_redis
@@ -20,16 +20,31 @@ async def list_available(
     limit: int = Query(default=20, ge=1, le=50),
 ):
     """Tasks available for this annotator to claim (not already taken by them)."""
+    # Always exclude in_progress (prevents double-claiming).
+    # Also exclude completed for correction tasks only: a rejected critique leaves
+    # the assignment completed while the task stays available, and we don't want
+    # the same annotator to re-evaluate the regenerated critique.
+    # For other task types, completed assignments belong to prior rounds (the task
+    # was regenerated after rejection), and round-2 re-annotation is allowed.
     subq = (
         select(TaskAssignment.task_id)
+        .join(Task, Task.id == TaskAssignment.task_id)
         .where(
             TaskAssignment.annotator_id == annotator.id,
-            TaskAssignment.status == AssignmentStatus.in_progress,
+            or_(
+                TaskAssignment.status == AssignmentStatus.in_progress,
+                and_(
+                    TaskAssignment.status == AssignmentStatus.completed,
+                    Task.task_type == "correction",
+                ),
+            ),
         )
     )
     query = select(Task).where(
         Task.status == TaskStatus.available,
         Task.id.not_in(subq),
+        # RLAIF-only tasks are handled entirely by AI — hide from human queue
+        func.coalesce(Task.metadata_["annotation_mode"].astext, "rlhf") != "rlaif",
     )
     if task_type:
         query = query.where(Task.task_type == task_type)
